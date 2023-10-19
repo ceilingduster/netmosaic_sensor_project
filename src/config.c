@@ -1,0 +1,107 @@
+#include "sensor.h"
+
+void print_usage(void) {
+    fprintf(stderr,
+        "%s %s\n"
+        "Usage: netmosaic_sensor [options]\n"
+        "  --workers N           Number of worker threads (default %d)\n"
+        "  --active              Enable inline reinjection\n"
+        "  --quarantine          Enable quarantine mode (drops non-syslog egress)\n"
+        "  --syslog-ip IP        Syslog collector IP (default 127.0.0.1)\n"
+        "  --syslog-port PORT    Syslog UDP port (default 514)\n"
+        "  --log-file PATH       JSONL log path (default ./logs/network.jsonl)\n"
+        "  --sensor-id ID        Override sensor identifier\n"
+        "  --stdout-minimal      Suppress verbose stdout logging\n"
+    "  --include-loopback    Do not suppress loopback-only flows\n"
+        "  --test-pcap FILE      Offline test mode using PCAP (lightweight parser)\n"
+        "  --test-synthetic      Generate synthetic packets for testing\n"
+        "  --test-logs           Exercise logger + syslog without capture\n"
+        , APP_NAME, VERSION_STRING, DEFAULT_WORKER_COUNT);
+}
+
+void default_config(sensor_config_t *cfg) {
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->workers = DEFAULT_WORKER_COUNT;
+    cfg->syslog_port = 514;
+    cfg->log_max_bytes = DEFAULT_LOG_MAX_BYTES;
+    cfg->stdout_minimal = false;
+    cfg->include_loopback = false;
+    safe_strcpy(cfg->log_path, sizeof(cfg->log_path), "logs\\network.jsonl");
+    safe_strcpy(cfg->syslog_ip, sizeof(cfg->syslog_ip), "127.0.0.1");
+}
+
+bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (_stricmp(arg, "--workers") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --workers\n");
+                return false;
+            }
+            cfg->workers = atoi(argv[++i]);
+            if (cfg->workers <= 0 || cfg->workers > MAX_WORKERS) {
+                fprintf(stderr, "Invalid worker count: %d\n", cfg->workers);
+                return false;
+            }
+        } else if (_stricmp(arg, "--active") == 0) {
+            cfg->active_mode = true;
+        } else if (_stricmp(arg, "--quarantine") == 0) {
+            cfg->quarantine_mode = true;
+            cfg->active_mode = true;
+        } else if (_stricmp(arg, "--syslog-ip") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --syslog-ip\n");
+                return false;
+            }
+            safe_strcpy(cfg->syslog_ip, sizeof(cfg->syslog_ip), argv[++i]);
+        } else if (_stricmp(arg, "--syslog-port") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --syslog-port\n");
+                return false;
+            }
+            cfg->syslog_port = (uint16_t)atoi(argv[++i]);
+        } else if (_stricmp(arg, "--log-file") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --log-file\n");
+                return false;
+            }
+            safe_strcpy(cfg->log_path, sizeof(cfg->log_path), argv[++i]);
+        } else if (_stricmp(arg, "--sensor-id") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --sensor-id\n");
+                return false;
+            }
+            safe_strcpy(cfg->sensor_id, sizeof(cfg->sensor_id), argv[++i]);
+            cfg->sensor_id_override = true;
+        } else if (_stricmp(arg, "--stdout-minimal") == 0) {
+            cfg->stdout_minimal = true;
+        } else if (_stricmp(arg, "--include-loopback") == 0) {
+            cfg->include_loopback = true;
+        } else if (_stricmp(arg, "--test-pcap") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --test-pcap\n");
+                return false;
+            }
+            cfg->test_pcap = true;
+            safe_strcpy(cfg->test_pcap_path, sizeof(cfg->test_pcap_path), argv[++i]);
+        } else if (_stricmp(arg, "--test-synthetic") == 0) {
+            cfg->test_synthetic = true;
+        } else if (_stricmp(arg, "--test-logs") == 0) {
+            cfg->test_logs = true;
+        } else if (_stricmp(arg, "--help") == 0 || _stricmp(arg, "-h") == 0) {
+            print_usage();
+            return false;
+        } else {
+            fprintf(stderr, "Unknown argument: %s\n", arg);
+            print_usage();
+            return false;
+        }
+    }
+
+    if (cfg->test_pcap || cfg->test_synthetic || cfg->test_logs) {
+        cfg->active_mode = false;
+        cfg->quarantine_mode = false;
+    }
+
+    return true;
+}
