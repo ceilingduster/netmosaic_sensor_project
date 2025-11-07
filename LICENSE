@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2023 Ian Redden
+Copyright (c) 2025 Ian Redden
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -40,4 +40,4 @@ nDPI (ntop Deep Packet Inspection)
 -----------------------------------
 Copyright (c) 2010-2023 ntop.
 Licensed under the GNU Lesser General Public License (LGPL) v3.0.
-See libs/nDPI-4.6/COPYING for full license details.
+See libs/nDPI-4.14/COPYING for full license details.

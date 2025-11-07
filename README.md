@@ -5,7 +5,7 @@ NetMosaic Sensor is a Windows network telemetry agent built on top of WinDivert 
 ## Project Overview
 
 - **Capture**: WinDivert is used to sniff (or reinject, in active mode) network traffic.
-- **Classification**: nDPI 4.6 classifies flows, generates L7 metadata, and surfaces risk flags.
+- **Classification**: nDPI 4.14 classifies flows, generates L7 metadata, and surfaces risk flags.
 - **Enrichment**: Lua scripts can augment flow records via helper functions (IPs, protocol names, SNI, hashes).
 - **Output**: A custom JSON builder writes events to `logs/network.jsonl` and optionally syslog; fields include byte/packet counters, detection changes, risks, and nDPI JSON blobs.
 - **Workers**: Packets travel through a ring buffer to worker threads which manage flow tables, TCP termination, and reporting thresholds.
@@ -17,20 +17,20 @@ The repository embeds the third-party sources that are needed but keeps them unb
 | Library     | Version | Location                                      | Notes |
 |-------------|---------|-----------------------------------------------|-------|
 | WinDivert   | 2.2     | `libs/windivert/`                             | Provides `WinDivert.dll` and headers. Grab binaries from https://reqrypt.org/windivert.html if you need updated drivers.|
-| nDPI        | 4.6     | `libs/nDPI-4.6/`                              | DPI engine; build the static library before compiling the sensor.|
+| nDPI        | 4.14    | `libs/nDPI-4.14/`                              | DPI engine; build the static library before compiling the sensor.|
 | Lua         | 5.4.x   | `libs/lua/`                                   | Embedded scripting runtime.
 
 ### Building nDPI (MSYS2 / MinGW64)
 
 ```bash
 # from the project root in MSYS2 MinGW64 shell
-cd libs/nDPI-4.6
+cd libs/nDPI-4.14
 ./autogen.sh
 ./configure --enable-static --disable-shared CC=gcc
 make -j$(nproc)
 ```
 
-After compilation the static library `src/lib/libndpi.a` is what the sensor links against (the Makefile already points to `libs/nDPI-4.6/src/lib`).
+After compilation the static library `src/lib/libndpi.a` is what the sensor links against (the Makefile already points to `libs/nDPI-4.14/src/lib`).
 
 ### Building Lua (already handled)
 

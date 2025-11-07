@@ -23,10 +23,10 @@
 
 #include "libs/windivert/include/windivert.h"
 
-#include "libs/nDPI-4.6/src/include/ndpi_api.h"
-#include "libs/nDPI-4.6/src/include/ndpi_main.h"
-#include "libs/nDPI-4.6/src/include/ndpi_typedefs.h"
-#include "libs/nDPI-4.6/src/include/ndpi_protocol_ids.h"
+#include "libs/nDPI-4.14/src/include/ndpi_api.h"
+#include "libs/nDPI-4.14/src/include/ndpi_main.h"
+#include "libs/nDPI-4.14/src/include/ndpi_typedefs.h"
+#include "libs/nDPI-4.14/src/include/ndpi_protocol_ids.h"
 
 #include "libs/lua/src/lua.h"
 #include "libs/lua/src/lualib.h"
