@@ -37,7 +37,12 @@ bool initialize_runtime(sensor_runtime_t *rt, sensor_config_t *cfg, bool *wsa_st
         *wsa_started = true;
     }
 
-    if (!log_manager_init(&rt->log_mgr, cfg->log_path, cfg->log_max_bytes)) {
+    if (!log_manager_init(&rt->log_mgr,
+                          cfg->log_path,
+                          cfg->log_max_bytes,
+                          cfg->log_buffer_bytes,
+                          cfg->log_flush_interval_ms,
+                          cfg->log_force_flush_on_malicious)) {
         fprintf(stderr, "[runtime] failed to initialize log manager\n");
         return false;
     }

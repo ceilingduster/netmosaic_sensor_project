@@ -10,13 +10,18 @@ void print_usage(void) {
         "  --syslog-ip IP        Syslog collector IP (default 127.0.0.1)\n"
         "  --syslog-port PORT    Syslog UDP port (default 514)\n"
         "  --log-file PATH       JSONL log path (default ./logs/network.jsonl)\n"
+        "  --log-buffer-bytes N   Buffered log queue threshold in bytes (default %llu)\n"
+        "  --log-flush-interval-ms MS  Max milliseconds before writer flush (default %u)\n"
+        "  --no-log-force-flush  Disable write-through flush for malicious events\n"
         "  --sensor-id ID        Override sensor identifier\n"
         "  --stdout-minimal      Suppress verbose stdout logging\n"
-    "  --include-loopback    Do not suppress loopback-only flows\n"
+        "  --include-loopback    Do not suppress loopback-only flows\n"
         "  --test-pcap FILE      Offline test mode using PCAP (lightweight parser)\n"
         "  --test-synthetic      Generate synthetic packets for testing\n"
         "  --test-logs           Exercise logger + syslog without capture\n"
-        , APP_NAME, VERSION_STRING, DEFAULT_WORKER_COUNT);
+        , APP_NAME, VERSION_STRING, DEFAULT_WORKER_COUNT,
+        (unsigned long long)DEFAULT_LOG_BUFFER_BYTES,
+        DEFAULT_LOG_FLUSH_INTERVAL_MS);
 }
 
 void default_config(sensor_config_t *cfg) {
@@ -24,6 +29,9 @@ void default_config(sensor_config_t *cfg) {
     cfg->workers = DEFAULT_WORKER_COUNT;
     cfg->syslog_port = 514;
     cfg->log_max_bytes = DEFAULT_LOG_MAX_BYTES;
+    cfg->log_buffer_bytes = DEFAULT_LOG_BUFFER_BYTES;
+    cfg->log_flush_interval_ms = DEFAULT_LOG_FLUSH_INTERVAL_MS;
+    cfg->log_force_flush_on_malicious = DEFAULT_FORCE_FLUSH_ON_MALICIOUS;
     cfg->stdout_minimal = false;
     cfg->include_loopback = false;
     safe_strcpy(cfg->log_path, sizeof(cfg->log_path), "logs\\network.jsonl");
@@ -66,6 +74,24 @@ bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
                 return false;
             }
             safe_strcpy(cfg->log_path, sizeof(cfg->log_path), argv[++i]);
+        } else if (_stricmp(arg, "--log-buffer-bytes") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --log-buffer-bytes\n");
+                return false;
+            }
+            cfg->log_buffer_bytes = (size_t)_strtoui64(argv[++i], NULL, 10);
+            if (cfg->log_buffer_bytes == 0) {
+                fprintf(stderr, "--log-buffer-bytes must be greater than zero\n");
+                return false;
+            }
+        } else if (_stricmp(arg, "--log-flush-interval-ms") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --log-flush-interval-ms\n");
+                return false;
+            }
+            cfg->log_flush_interval_ms = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (_stricmp(arg, "--no-log-force-flush") == 0) {
+            cfg->log_force_flush_on_malicious = false;
         } else if (_stricmp(arg, "--sensor-id") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Missing value for --sensor-id\n");

@@ -52,6 +52,9 @@
 #define FLOW_TABLE_CAPACITY      65536u
 #define LOG_ROTATION_HISTORY     10u
 #define DEFAULT_LOG_MAX_BYTES    (10u * 1024u * 1024u)
+#define DEFAULT_LOG_BUFFER_BYTES (256u * 1024u)
+#define DEFAULT_LOG_FLUSH_INTERVAL_MS 100u
+#define DEFAULT_FORCE_FLUSH_ON_MALICIOUS true
 #define LUA_MAX_SIGNATURE        96u
 #define LUA_MAX_SCRIPTS          128u
 #define MAX_SYSLOG_LINE          4096u
@@ -70,8 +73,11 @@ typedef struct sensor_config {
     bool test_logs;
     bool sensor_id_override;
     bool include_loopback;
+    bool log_force_flush_on_malicious;
     uint16_t syslog_port;
+    uint32_t log_flush_interval_ms;
     size_t log_max_bytes;
+    size_t log_buffer_bytes;
     char syslog_ip[MAX_IP_STRING];
     char log_path[MAX_PATH];
     char sensor_id[128];
@@ -79,11 +85,20 @@ typedef struct sensor_config {
 } sensor_config_t;
 
 typedef struct log_manager {
-    FILE *file;
+    HANDLE file;
+    HANDLE flush_thread;
+    HANDLE flush_event;
     char directory[MAX_PATH];
     char filename[MAX_PATH];
     size_t current_size;
     size_t rotate_bytes;
+    size_t max_buffer_bytes;
+    uint32_t flush_interval_ms;
+    bool force_flush_on_malicious;
+    volatile LONG64 queue_bytes;
+    volatile LONG pending_force_flush;
+    volatile LONG shutdown;
+    SLIST_HEADER queue_head;
     CRITICAL_SECTION lock;
 } log_manager_t;
 
@@ -274,9 +289,15 @@ bool parse_packet_metadata(const uint8_t *packet, UINT packet_len, const WINDIVE
 bool load_lua_scripts(sensor_runtime_t *rt);
 bool worker_prepare_lua(worker_context_t *worker);
 
-bool log_manager_init(log_manager_t *mgr, const char *path, size_t rotate_bytes);
+bool log_manager_init(log_manager_t *mgr,
+                      const char *path,
+                      size_t rotate_bytes,
+                      size_t max_buffer_bytes,
+                      uint32_t flush_interval_ms,
+                      bool force_flush_on_malicious_event);
 void log_manager_close(log_manager_t *mgr);
 bool log_manager_write_line(log_manager_t *mgr, const char *line);
+bool log_manager_write_line_critical(log_manager_t *mgr, const char *line);
 
 bool syslog_target_init(syslog_target_t *target, const sensor_config_t *cfg);
 void syslog_target_close(syslog_target_t *target);
