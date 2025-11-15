@@ -3,9 +3,6 @@
 bool run_test_logs(sensor_runtime_t *runtime) {
     const char *sample = "{\"sensor_id\":\"TEST\",\"ts\":0.0,\"flow_hash\":\"0000000000000000\",\"proto\":\"TEST\",\"quarantine\":false}\n";
     log_manager_write_line(&runtime->log_mgr, sample);
-    if (runtime->syslog.enabled) {
-        syslog_target_send(&runtime->syslog, sample);
-    }
     printf("[test-logs] wrote sample event to %s\n", runtime->config->log_path);
     return true;
 }
@@ -76,9 +73,6 @@ bool run_test_synthetic(sensor_runtime_t *runtime) {
     size_t len = worker_process_packet(&worker, &job, json_line, sizeof(json_line), &allow_reinject);
     if (len > 0) {
         log_manager_write_line(&runtime->log_mgr, json_line);
-        if (runtime->syslog.enabled) {
-            syslog_target_send(&runtime->syslog, json_line);
-        }
         printf("[test-synthetic] generated event: %.*s", (int)len, json_line);
     }
 
@@ -208,9 +202,6 @@ bool run_test_pcap(sensor_runtime_t *runtime, const char *path) {
         size_t len = worker_process_packet(&worker, &job, json_line, sizeof(json_line), &allow_reinject);
         if (len > 0) {
             log_manager_write_line(&runtime->log_mgr, json_line);
-            if (runtime->syslog.enabled) {
-                syslog_target_send(&runtime->syslog, json_line);
-            }
             events++;
         }
     }

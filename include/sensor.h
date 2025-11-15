@@ -28,6 +28,14 @@
 #include "libs/nDPI-4.14/src/include/ndpi_typedefs.h"
 #include "libs/nDPI-4.14/src/include/ndpi_protocol_ids.h"
 
+/* nDPI redefines printf/fprintf for its own logging; restore the CRT symbols for the sensor. */
+#ifdef printf
+#undef printf
+#endif
+#ifdef fprintf
+#undef fprintf
+#endif
+
 #include "libs/lua/src/lua.h"
 #include "libs/lua/src/lualib.h"
 #include "libs/lua/src/lauxlib.h"
@@ -57,7 +65,6 @@
 #define DEFAULT_FORCE_FLUSH_ON_MALICIOUS true
 #define LUA_MAX_SIGNATURE        96u
 #define LUA_MAX_SCRIPTS          128u
-#define MAX_SYSLOG_LINE          4096u
 #define MAX_JSON_BUFFER          8192u
 #define MAX_IP_STRING            128u
 #define FLOW_VOLUME_BYTES_THRESHOLD 256ULL
@@ -74,11 +81,9 @@ typedef struct sensor_config {
     bool sensor_id_override;
     bool include_loopback;
     bool log_force_flush_on_malicious;
-    uint16_t syslog_port;
     uint32_t log_flush_interval_ms;
     size_t log_max_bytes;
     size_t log_buffer_bytes;
-    char syslog_ip[MAX_IP_STRING];
     char log_path[MAX_PATH];
     char sensor_id[128];
     char test_pcap_path[MAX_PATH];
@@ -99,16 +104,8 @@ typedef struct log_manager {
     volatile LONG pending_force_flush;
     volatile LONG shutdown;
     SLIST_HEADER queue_head;
-    CRITICAL_SECTION lock;
+    SRWLOCK lock;
 } log_manager_t;
-
-typedef struct syslog_target {
-    SOCKET sock;
-    struct sockaddr_storage addr;
-    int addr_len;
-    bool enabled;
-    CRITICAL_SECTION lock;
-} syslog_target_t;
 
 typedef struct lua_script_descriptor {
     char signature[LUA_MAX_SIGNATURE];
@@ -204,15 +201,10 @@ typedef struct worker_context worker_context_t;
 typedef struct sensor_runtime {
     sensor_config_t *config;
     log_manager_t log_mgr;
-    syslog_target_t syslog;
     runtime_metrics_t metrics;
     lua_script_descriptor_t scripts[LUA_MAX_SCRIPTS];
     size_t script_count;
     volatile LONG running;
-    uint32_t syslog_allowed_v4;
-    struct in6_addr syslog_allowed_v6;
-    bool syslog_allow_v4_valid;
-    bool syslog_allow_v6_valid;
     bool include_loopback;
 } sensor_runtime_t;
 
@@ -255,6 +247,7 @@ uint16_t swap_u16(uint16_t v);
 uint64_t fnv1a64(const void *data, size_t len);
 uint64_t get_time_nanoseconds(void);
 double get_time_seconds(void);
+void sensor_debugf(const char *fmt, ...);
 bool read_machine_guid(char *buffer, size_t length);
 bool ensure_directory_exists(const char *path);
 bool ensure_parent_directory(const char *filepath);
@@ -299,11 +292,6 @@ void log_manager_close(log_manager_t *mgr);
 bool log_manager_write_line(log_manager_t *mgr, const char *line);
 bool log_manager_write_line_critical(log_manager_t *mgr, const char *line);
 
-bool syslog_target_init(syslog_target_t *target, const sensor_config_t *cfg);
-void syslog_target_close(syslog_target_t *target);
-bool syslog_target_send(syslog_target_t *target, const char *line);
-
-void runtime_update_syslog_allow(sensor_runtime_t *rt);
 bool initialize_runtime(sensor_runtime_t *rt, sensor_config_t *cfg, bool *wsa_started);
 void shutdown_runtime(sensor_runtime_t *rt, bool *wsa_started);
 bool runtime_is_quarantine_permitted(sensor_runtime_t *rt, const packet_metadata_t *meta);

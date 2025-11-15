@@ -6,9 +6,7 @@ void print_usage(void) {
         "Usage: netmosaic_sensor [options]\n"
         "  --workers N           Number of worker threads (default %d)\n"
         "  --active              Enable inline reinjection\n"
-        "  --quarantine          Enable quarantine mode (drops non-syslog egress)\n"
-        "  --syslog-ip IP        Syslog collector IP (default 127.0.0.1)\n"
-        "  --syslog-port PORT    Syslog UDP port (default 514)\n"
+        "  --quarantine          Enable quarantine mode (drops outbound reinjection)\n"
         "  --log-file PATH       JSONL log path (default ./logs/network.jsonl)\n"
         "  --log-buffer-bytes N   Buffered log queue threshold in bytes (default %llu)\n"
         "  --log-flush-interval-ms MS  Max milliseconds before writer flush (default %u)\n"
@@ -18,7 +16,7 @@ void print_usage(void) {
         "  --include-loopback    Do not suppress loopback-only flows\n"
         "  --test-pcap FILE      Offline test mode using PCAP (lightweight parser)\n"
         "  --test-synthetic      Generate synthetic packets for testing\n"
-        "  --test-logs           Exercise logger + syslog without capture\n"
+        "  --test-logs           Exercise logger without capture\n"
         , APP_NAME, VERSION_STRING, DEFAULT_WORKER_COUNT,
         (unsigned long long)DEFAULT_LOG_BUFFER_BYTES,
         DEFAULT_LOG_FLUSH_INTERVAL_MS);
@@ -27,7 +25,6 @@ void print_usage(void) {
 void default_config(sensor_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->workers = DEFAULT_WORKER_COUNT;
-    cfg->syslog_port = 514;
     cfg->log_max_bytes = DEFAULT_LOG_MAX_BYTES;
     cfg->log_buffer_bytes = DEFAULT_LOG_BUFFER_BYTES;
     cfg->log_flush_interval_ms = DEFAULT_LOG_FLUSH_INTERVAL_MS;
@@ -35,7 +32,6 @@ void default_config(sensor_config_t *cfg) {
     cfg->stdout_minimal = false;
     cfg->include_loopback = false;
     safe_strcpy(cfg->log_path, sizeof(cfg->log_path), "logs\\network.jsonl");
-    safe_strcpy(cfg->syslog_ip, sizeof(cfg->syslog_ip), "127.0.0.1");
 }
 
 bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
@@ -56,18 +52,6 @@ bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
         } else if (_stricmp(arg, "--quarantine") == 0) {
             cfg->quarantine_mode = true;
             cfg->active_mode = true;
-        } else if (_stricmp(arg, "--syslog-ip") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Missing value for --syslog-ip\n");
-                return false;
-            }
-            safe_strcpy(cfg->syslog_ip, sizeof(cfg->syslog_ip), argv[++i]);
-        } else if (_stricmp(arg, "--syslog-port") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Missing value for --syslog-port\n");
-                return false;
-            }
-            cfg->syslog_port = (uint16_t)atoi(argv[++i]);
         } else if (_stricmp(arg, "--log-file") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Missing value for --log-file\n");

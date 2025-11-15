@@ -1,26 +1,10 @@
 #include "sensor.h"
 
-void runtime_update_syslog_allow(sensor_runtime_t *rt) {
-    rt->syslog_allow_v4_valid = false;
-    rt->syslog_allow_v6_valid = false;
-    if (!rt || !rt->config) {
-        return;
-    }
-    struct in_addr addr4;
-    if (InetPtonA(AF_INET, rt->config->syslog_ip, &addr4) == 1) {
-        rt->syslog_allowed_v4 = addr4.S_un.S_addr;
-        rt->syslog_allow_v4_valid = true;
-        return;
-    }
-    if (InetPtonA(AF_INET6, rt->config->syslog_ip, &rt->syslog_allowed_v6) == 1) {
-        rt->syslog_allow_v6_valid = true;
-    }
-}
-
 bool initialize_runtime(sensor_runtime_t *rt, sensor_config_t *cfg, bool *wsa_started) {
     memset(rt, 0, sizeof(*rt));
     rt->config = cfg;
     rt->include_loopback = cfg->include_loopback;
+    sensor_debugf("[runtime] initialize start (log=%s, workers=%d)", cfg->log_path, cfg->workers);
 
     if (!cfg->sensor_id_override) {
         if (!read_machine_guid(cfg->sensor_id, sizeof(cfg->sensor_id))) {
@@ -32,6 +16,7 @@ bool initialize_runtime(sensor_runtime_t *rt, sensor_config_t *cfg, bool *wsa_st
     if (wsa_started && !*wsa_started) {
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
             fprintf(stderr, "[runtime] WSAStartup failed\n");
+            sensor_debugf("[runtime] WSAStartup failed (err=%lu)", WSAGetLastError());
             return false;
         }
         *wsa_started = true;
@@ -44,21 +29,18 @@ bool initialize_runtime(sensor_runtime_t *rt, sensor_config_t *cfg, bool *wsa_st
                           cfg->log_flush_interval_ms,
                           cfg->log_force_flush_on_malicious)) {
         fprintf(stderr, "[runtime] failed to initialize log manager\n");
+        sensor_debugf("[runtime] log manager init failed");
         return false;
     }
 
-    if (!syslog_target_init(&rt->syslog, cfg)) {
-        fprintf(stderr, "[runtime] syslog disabled due to initialization failure\n");
-    }
-
-    runtime_update_syslog_allow(rt);
-
     if (!load_lua_scripts(rt)) {
         fprintf(stderr, "[runtime] failed to load Lua scripts\n");
+        sensor_debugf("[runtime] load_lua_scripts failed");
         return false;
     }
 
     InterlockedExchange(&rt->running, 1);
+    sensor_debugf("[runtime] initialize complete");
     return true;
 }
 
@@ -66,7 +48,6 @@ void shutdown_runtime(sensor_runtime_t *rt, bool *wsa_started) {
     if (!rt) return;
     InterlockedExchange(&rt->running, 0);
     log_manager_close(&rt->log_mgr);
-    syslog_target_close(&rt->syslog);
     if (wsa_started && *wsa_started) {
         WSACleanup();
         *wsa_started = false;

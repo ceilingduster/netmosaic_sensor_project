@@ -47,6 +47,44 @@ double get_time_seconds(void) {
     return (double)get_time_nanoseconds() / 1e9;
 }
 
+void sensor_debugf(const char *fmt, ...) {
+    char message[1024];
+    va_list args;
+    va_start(args, fmt);
+    _vsnprintf_s(message, sizeof(message), _TRUNCATE, fmt, args);
+    va_end(args);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char line[1200];
+    int len = _snprintf_s(line, sizeof(line), _TRUNCATE,
+                          "%04d-%02d-%02d %02d:%02d:%02d.%03d %s\r\n",
+                          st.wYear, st.wMonth, st.wDay,
+                          st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+                          message);
+    if (len <= 0) {
+        return;
+    }
+
+    OutputDebugStringA(line);
+    fputs(line, stderr);
+
+    ensure_directory_exists("logs");
+    HANDLE file = CreateFileA("logs\\sensor-debug.log",
+                              FILE_APPEND_DATA,
+                              FILE_SHARE_READ,
+                              NULL,
+                              OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL,
+                              NULL);
+    if (file != INVALID_HANDLE_VALUE) {
+        SetFilePointer(file, 0, NULL, FILE_END);
+        DWORD written = 0;
+        WriteFile(file, line, (DWORD)len, &written, NULL);
+        CloseHandle(file);
+    }
+}
+
 bool read_machine_guid(char *buffer, size_t length) {
     HKEY key = NULL;
     DWORD type = 0;

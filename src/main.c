@@ -20,28 +20,39 @@ static BOOL WINAPI console_ctrl_handler(DWORD type) {
 }
 
 int main(int argc, char **argv) {
+    sensor_debugf("[main] startup argc=%d", argc);
+    FILE *trace = fopen("trace.log", "a");
+    if (trace) {
+        fprintf(trace, "entered main with %d args\n", argc);
+        fclose(trace);
+    }
     default_config(&g_config);
     if (!parse_arguments(&g_config, argc, argv)) {
+        sensor_debugf("[main] parse_arguments returned false");
         return 1;
     }
 
     if (!initialize_runtime(&g_runtime, &g_config, &g_wsa_started)) {
+        sensor_debugf("[main] initialize_runtime failed");
         return 1;
     }
 
     if (g_config.test_logs) {
+        sensor_debugf("[main] running log test mode");
         run_test_logs(&g_runtime);
         shutdown_runtime(&g_runtime, &g_wsa_started);
         return 0;
     }
 
     if (g_config.test_synthetic) {
+        sensor_debugf("[main] running synthetic test mode");
         run_test_synthetic(&g_runtime);
         shutdown_runtime(&g_runtime, &g_wsa_started);
         return 0;
     }
 
     if (g_config.test_pcap) {
+        sensor_debugf("[main] running pcap test mode (%s)", g_config.test_pcap_path);
         bool ok = run_test_pcap(&g_runtime, g_config.test_pcap_path);
         shutdown_runtime(&g_runtime, &g_wsa_started);
         return ok ? 0 : 1;

@@ -74,6 +74,7 @@ static void log_manager_cleanup_rotations(log_manager_t *mgr) {
 
 static bool log_manager_open_primary(log_manager_t *mgr, DWORD extra_flags) {
     if (!ensure_parent_directory(mgr->filename)) {
+        sensor_debugf("[log] ensure_parent_directory failed for %s", mgr->filename);
         return false;
     }
 
@@ -86,6 +87,7 @@ static bool log_manager_open_primary(log_manager_t *mgr, DWORD extra_flags) {
                                 attributes,
                                 NULL);
     if (handle == INVALID_HANDLE_VALUE) {
+        sensor_debugf("[log] CreateFileA failed for %s (err=%lu)", mgr->filename, GetLastError());
         return false;
     }
 
@@ -113,6 +115,7 @@ static HANDLE log_manager_open_write_through(const log_manager_t *mgr) {
                                 attributes,
                                 NULL);
     if (handle == INVALID_HANDLE_VALUE) {
+        sensor_debugf("[log] write-through handle failed for %s (err=%lu)", mgr->filename, GetLastError());
         return INVALID_HANDLE_VALUE;
     }
     LARGE_INTEGER zero;
@@ -183,11 +186,11 @@ static bool log_manager_write_batch(log_manager_t *mgr, const log_batch_t *batch
         return true;
     }
 
-    EnterCriticalSection(&mgr->lock);
+    AcquireSRWLockExclusive(&mgr->lock);
 
     if (!mgr->file || mgr->file == INVALID_HANDLE_VALUE) {
         if (!log_manager_open_primary(mgr, 0)) {
-            LeaveCriticalSection(&mgr->lock);
+            ReleaseSRWLockExclusive(&mgr->lock);
             log_manager_free_batch(batch->head);
             return false;
         }
@@ -195,7 +198,7 @@ static bool log_manager_write_batch(log_manager_t *mgr, const log_batch_t *batch
 
     if (mgr->rotate_bytes > 0 && (mgr->current_size + batch->total_bytes) >= mgr->rotate_bytes) {
         if (!log_manager_rotate_locked(mgr)) {
-            LeaveCriticalSection(&mgr->lock);
+            ReleaseSRWLockExclusive(&mgr->lock);
             log_manager_free_batch(batch->head);
             return false;
         }
@@ -225,7 +228,7 @@ static bool log_manager_write_batch(log_manager_t *mgr, const log_batch_t *batch
         FlushFileBuffers(mgr->file);
     }
 
-    LeaveCriticalSection(&mgr->lock);
+    ReleaseSRWLockExclusive(&mgr->lock);
 
     if (!ok) {
         DWORD err = GetLastError();
@@ -361,7 +364,7 @@ bool log_manager_init(log_manager_t *mgr,
     mgr->max_buffer_bytes = max_buffer_bytes ? max_buffer_bytes : DEFAULT_LOG_BUFFER_BYTES;
     mgr->flush_interval_ms = flush_interval_ms;
     mgr->force_flush_on_malicious = force_flush_on_malicious_event;
-    InitializeCriticalSection(&mgr->lock);
+    InitializeSRWLock(&mgr->lock);
     InitializeSListHead(&mgr->queue_head);
 
     safe_strcpy(mgr->filename, sizeof(mgr->filename), path);
@@ -383,18 +386,20 @@ bool log_manager_init(log_manager_t *mgr,
     }
 
     if (!log_manager_open_primary(mgr, 0)) {
-        DeleteCriticalSection(&mgr->lock);
+        sensor_debugf("[log] log_manager_open_primary failed for %s", path);
         return false;
     }
 
     mgr->flush_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (!mgr->flush_event) {
+        sensor_debugf("[log] CreateEventA failed (err=%lu)", GetLastError());
         log_manager_close(mgr);
         return false;
     }
 
     uintptr_t thread = _beginthreadex(NULL, 0, log_manager_flush_thread, mgr, 0, NULL);
     if (!thread) {
+        sensor_debugf("[log] failed to start flush thread (err=%lu)", GetLastError());
         log_manager_close(mgr);
         return false;
     }
@@ -422,14 +427,13 @@ void log_manager_close(log_manager_t *mgr) {
         mgr->flush_event = NULL;
     }
 
-    EnterCriticalSection(&mgr->lock);
+    AcquireSRWLockExclusive(&mgr->lock);
     if (mgr->file && mgr->file != INVALID_HANDLE_VALUE) {
         FlushFileBuffers(mgr->file);
         CloseHandle(mgr->file);
         mgr->file = INVALID_HANDLE_VALUE;
     }
-    LeaveCriticalSection(&mgr->lock);
-    DeleteCriticalSection(&mgr->lock);
+    ReleaseSRWLockExclusive(&mgr->lock);
 
     PSLIST_ENTRY leftover = InterlockedFlushSList(&mgr->queue_head);
     while (leftover) {

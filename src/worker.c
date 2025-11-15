@@ -203,28 +203,10 @@ static bool lua_table_is_empty(lua_State *L, int index) {
 }
 
 bool runtime_is_quarantine_permitted(sensor_runtime_t *rt, const packet_metadata_t *meta) {
-    if (!rt->config->quarantine_mode) {
+    if (!rt || !meta || !rt->config->quarantine_mode) {
         return true;
     }
-    if (!meta->outbound) {
-        return true;
-    }
-    if (!rt->syslog_allow_v4_valid && !rt->syslog_allow_v6_valid) {
-        return false;
-    }
-    if (!meta->ipv6 && rt->syslog_allow_v4_valid) {
-        if (memcmp(meta->dst_ip, &rt->syslog_allowed_v4, 4) != 0) {
-            return false;
-        }
-        return meta->dst_port == rt->config->syslog_port;
-    }
-    if (meta->ipv6 && rt->syslog_allow_v6_valid) {
-        if (memcmp(meta->dst_ip, &rt->syslog_allowed_v6, 16) != 0) {
-            return false;
-        }
-        return meta->dst_port == rt->config->syslog_port;
-    }
-    return false;
+    return !meta->outbound;
 }
 
 static void worker_set_detection_bitmask(worker_context_t *worker) {
@@ -647,9 +629,6 @@ static unsigned __stdcall worker_thread_main(void *arg) {
         }
 
         log_manager_write_line(&worker->runtime->log_mgr, json_line);
-        if (worker->runtime->syslog.enabled) {
-            syslog_target_send(&worker->runtime->syslog, json_line);
-        }
         if (!worker->runtime->config->stdout_minimal) {
             char src_ip[MAX_IP_STRING];
             char dst_ip[MAX_IP_STRING];

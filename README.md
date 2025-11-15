@@ -1,13 +1,13 @@
 # NetMosaic Sensor
 
-NetMosaic Sensor is a Windows network telemetry agent built on top of WinDivert and nDPI. It captures packets, performs deep packet inspection, enriches the flow with Lua helpers, and emits structured JSON lines for logging and syslog streaming.
+NetMosaic Sensor is a Windows network telemetry agent built on top of WinDivert and nDPI. It captures packets, performs deep packet inspection, enriches the flow with Lua helpers, and emits structured JSON lines for local logging.
 
 ## Project Overview
 
 - **Capture**: WinDivert is used to sniff (or reinject, in active mode) network traffic.
 - **Classification**: nDPI 4.14 classifies flows, generates L7 metadata, and surfaces risk flags.
 - **Enrichment**: Lua scripts can augment flow records via helper functions (IPs, protocol names, SNI, hashes).
-- **Output**: A custom JSON builder writes events to `logs/network.jsonl` and optionally syslog; fields include byte/packet counters, detection changes, risks, and nDPI JSON blobs.
+- **Output**: A custom JSON builder writes events to `logs/network.jsonl`; fields include byte/packet counters, detection changes, risks, and nDPI JSON blobs.
 - **Workers**: Packets travel through a ring buffer to worker threads which manage flow tables, TCP termination, and reporting thresholds.
 
 ## Required Libraries

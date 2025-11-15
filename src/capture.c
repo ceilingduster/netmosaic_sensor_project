@@ -39,21 +39,6 @@ static unsigned __stdcall capture_thread_main(void *arg) {
             continue;
         }
 
-        bool dst_syslog_v4 = (!job.meta.ipv6 && ctx->runtime->syslog_allow_v4_valid &&
-                               memcmp(job.meta.dst_ip, &ctx->runtime->syslog_allowed_v4, 4) == 0);
-        bool dst_syslog_v6 = (job.meta.ipv6 && ctx->runtime->syslog_allow_v6_valid &&
-                               memcmp(job.meta.dst_ip, &ctx->runtime->syslog_allowed_v6, 16) == 0);
-        bool src_syslog_v4 = (!job.meta.ipv6 && ctx->runtime->syslog_allow_v4_valid &&
-                               memcmp(job.meta.src_ip, &ctx->runtime->syslog_allowed_v4, 4) == 0);
-        bool src_syslog_v6 = (job.meta.ipv6 && ctx->runtime->syslog_allow_v6_valid &&
-                               memcmp(job.meta.src_ip, &ctx->runtime->syslog_allowed_v6, 16) == 0);
-        bool syslog_match = (job.meta.proto == IPPROTO_UDP &&
-                             ((job.meta.dst_port == ctx->runtime->config->syslog_port && (dst_syslog_v4 || dst_syslog_v6)) ||
-                              (job.meta.src_port == ctx->runtime->config->syslog_port && (src_syslog_v4 || src_syslog_v6))));
-        if (syslog_match) {
-            continue;
-        }
-
         flow_key_t key;
         metadata_to_flow_key(&job.meta, &key);
         uint64_t hash = flow_hash_from_key(&key);

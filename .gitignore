@@ -1,5 +1,7 @@
 .vscode/
 netmosaic_sensor.exe
+WinDivert.dll
 build/
 logs/
 TODO.md
+libwinpthread-1.dll
