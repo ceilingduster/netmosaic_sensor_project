@@ -6,7 +6,8 @@ CFLAGS := -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(NDPI_DEFINES) -I. -
 	-Ilibs/lua/src \
 	-Ilibs/lmdb
 
-LDFLAGS := -Llibs/nDPI-4.14/src/lib -Llibs/windivert/x64 -Lbuild/lua
+LDFLAGS := -static -static-libgcc -static-libstdc++ -Wl,--whole-archive -lwinpthread -Wl,--no-whole-archive \
+           -Llibs/nDPI-4.14/src/lib -Llibs/windivert/x64 -Lbuild/luanet
 LIBS := -lndpi -lWinDivert -llua -lws2_32 -liphlpapi -ladvapi32
 
 BUILD_DIR := build
@@ -68,6 +69,8 @@ $(TARGET): $(OBJS) $(LMDB_OBJS) $(LUA_BUILD_DIR)/liblua.a
 	@$(call make_dir,$(DIST_LOG_DIR_WIN))
 	@$(call make_dir,$(DIST_STATIC_DIR_WIN))
 	@copy /Y "$@" "$(DIST_DIR_WIN)\$@" >NUL
+	@if exist "$(PTHREAD_DLL_WIN)" copy /Y "$(PTHREAD_DLL_WIN)" "$(DIST_DIR_WIN)\libwinpthread-1.dll" >NUL
+	@if exist "$(WINDIVERT_DLL_WIN)" copy /Y "$(WINDIVERT_DLL_WIN)" "$(DIST_DIR_WIN)\WinDivert.dll" >NUL
 	@if exist "$(BUILD_DIR_WIN)\lua\liblua.a" copy /Y "$(BUILD_DIR_WIN)\lua\liblua.a" "$(DIST_STATIC_DIR_WIN)\liblua.a" >NUL
 	@if exist "libs\nDPI-4.14\src\lib\libndpi.a" copy /Y "libs\nDPI-4.14\src\lib\libndpi.a" "$(DIST_STATIC_DIR_WIN)\libndpi.a" >NUL
 
