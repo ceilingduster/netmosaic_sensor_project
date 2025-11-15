@@ -11,6 +11,9 @@ void print_usage(void) {
         "  --log-buffer-bytes N   Buffered log queue threshold in bytes (default %llu)\n"
         "  --log-flush-interval-ms MS  Max milliseconds before writer flush (default %u)\n"
         "  --no-log-force-flush  Disable write-through flush for malicious events\n"
+        "  --flow-store-path PATH  Override LMDB path (default %%TEMP%%/SENSOR_ID.lmdb)\n"
+        "  --flow-store-map-bytes N  LMDB map size in bytes (default %llu)\n"
+        "  --flow-store-max-readers N  Max LMDB readers (default %u)\n"
         "  --sensor-id ID        Override sensor identifier\n"
         "  --stdout-minimal      Suppress verbose stdout logging\n"
         "  --include-loopback    Do not suppress loopback-only flows\n"
@@ -19,7 +22,9 @@ void print_usage(void) {
         "  --test-logs           Exercise logger without capture\n"
         , APP_NAME, VERSION_STRING, DEFAULT_WORKER_COUNT,
         (unsigned long long)DEFAULT_LOG_BUFFER_BYTES,
-        DEFAULT_LOG_FLUSH_INTERVAL_MS);
+        DEFAULT_LOG_FLUSH_INTERVAL_MS,
+        (unsigned long long)DEFAULT_FLOW_STORE_MAP_BYTES,
+        DEFAULT_FLOW_STORE_MAX_READERS);
 }
 
 void default_config(sensor_config_t *cfg) {
@@ -32,6 +37,12 @@ void default_config(sensor_config_t *cfg) {
     cfg->stdout_minimal = false;
     cfg->include_loopback = false;
     safe_strcpy(cfg->log_path, sizeof(cfg->log_path), "logs\\network.jsonl");
+    cfg->flow_store_map_bytes = DEFAULT_FLOW_STORE_MAP_BYTES;
+    cfg->flow_store_max_readers = DEFAULT_FLOW_STORE_MAX_READERS;
+    cfg->flow_store_path[0] = '\0';
+    cfg->tcp_idle_timeout_seconds = DEFAULT_TCP_IDLE_TIMEOUT_SECONDS;
+    cfg->other_idle_timeout_seconds = DEFAULT_OTHER_IDLE_TIMEOUT_SECONDS;
+    cfg->idle_sweep_interval_seconds = DEFAULT_IDLE_SWEEP_INTERVAL_SECONDS;
 }
 
 bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
@@ -76,6 +87,32 @@ bool parse_arguments(sensor_config_t *cfg, int argc, char **argv) {
             cfg->log_flush_interval_ms = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (_stricmp(arg, "--no-log-force-flush") == 0) {
             cfg->log_force_flush_on_malicious = false;
+        } else if (_stricmp(arg, "--flow-store-path") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --flow-store-path\n");
+                return false;
+            }
+            safe_strcpy(cfg->flow_store_path, sizeof(cfg->flow_store_path), argv[++i]);
+        } else if (_stricmp(arg, "--flow-store-map-bytes") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --flow-store-map-bytes\n");
+                return false;
+            }
+            cfg->flow_store_map_bytes = (size_t)_strtoui64(argv[++i], NULL, 10);
+            if (cfg->flow_store_map_bytes == 0) {
+                fprintf(stderr, "--flow-store-map-bytes must be greater than zero\n");
+                return false;
+            }
+        } else if (_stricmp(arg, "--flow-store-max-readers") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing value for --flow-store-max-readers\n");
+                return false;
+            }
+            cfg->flow_store_max_readers = (unsigned int)strtoul(argv[++i], NULL, 10);
+            if (cfg->flow_store_max_readers == 0) {
+                fprintf(stderr, "--flow-store-max-readers must be greater than zero\n");
+                return false;
+            }
         } else if (_stricmp(arg, "--sensor-id") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Missing value for --sensor-id\n");

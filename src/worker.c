@@ -263,7 +263,7 @@ static void worker_apply_ndpi_config(worker_context_t *worker) {
 }
 
 static bool worker_append_ndpi_json(worker_context_t *worker,
-                                    flow_entry_t *entry,
+                                    const flow_entry_t *entry,
                                     const packet_metadata_t *meta,
                                     json_builder_t *jb) {
     if (!entry || !entry->ndpi_flow || !worker || !jb || !worker->ndpi_serializer_ready) {
@@ -323,6 +323,258 @@ static bool worker_append_ndpi_json(worker_context_t *worker,
         fprintf(stderr, "[worker %d] ndpi_flow2json failed (%d)\n", worker->worker_id, rc);
     }
     return appended;
+}
+
+static size_t json_builder_write_completed_flow(worker_context_t *worker,
+                                                const flow_entry_t *entry,
+                                                const packet_metadata_t *meta,
+                                                const nm_flow_state_t *snapshot,
+                                                char *json_out,
+                                                size_t json_out_size,
+                                                uint64_t hash) {
+    if (!worker || !entry || !meta || !snapshot || !json_out || json_out_size == 0) {
+        return 0;
+    }
+
+    json_builder_t jb;
+    bool lua_open = false;
+    jb_reset(&jb);
+    if (!jb_open_object(&jb)) {
+        return 0;
+    }
+
+    char flow_hash_hex[17];
+    snprintf(flow_hash_hex, sizeof(flow_hash_hex), "%016llx", (unsigned long long)hash);
+
+    tls_packet_meta = meta;
+    tls_flow_entry = entry;
+    tls_flow_hash_hex = flow_hash_hex;
+    tls_ndpi_module = worker->ndpi_module;
+
+    jb_add_string(&jb, "sensor_id", worker->runtime->config->sensor_id);
+    jb_add_double(&jb, "ts", entry->last_seen);
+    jb_add_string(&jb, "flow_hash", flow_hash_hex);
+
+    char src_ip[MAX_IP_STRING];
+    char dst_ip[MAX_IP_STRING];
+    format_ip_string(meta, true, src_ip, sizeof(src_ip));
+    format_ip_string(meta, false, dst_ip, sizeof(dst_ip));
+
+    jb_add_string(&jb, "src_ip", src_ip);
+    jb_add_string(&jb, "dst_ip", dst_ip);
+    jb_add_uint64(&jb, "src_port", meta->src_port);
+    jb_add_uint64(&jb, "dst_port", meta->dst_port);
+    jb_add_uint64(&jb, "proto_id", meta->proto);
+    jb_add_bool(&jb, "outbound", meta->outbound);
+    jb_add_uint64(&jb, "bytes_total", snapshot->bytes_total);
+    jb_add_uint64(&jb, "packets_total", snapshot->packets_total);
+    jb_add_uint64(&jb, "bytes_out", entry->bytes_outbound);
+    jb_add_uint64(&jb, "bytes_in", entry->bytes_inbound);
+    jb_add_uint64(&jb, "first_seen_ns", snapshot->first_seen_ts);
+    jb_add_uint64(&jb, "last_seen_ns", snapshot->last_seen_ts);
+
+    worker_append_ndpi_json(worker, entry, meta, &jb);
+
+    const char *proto_name = ndpi_get_proto_name(worker->ndpi_module, entry->detected.proto.app_protocol);
+    const char *master_name = ndpi_get_proto_name(worker->ndpi_module, entry->detected.proto.master_protocol);
+    const char *category_name = ndpi_category_get_name(worker->ndpi_module, entry->detected.category);
+    if (proto_name) jb_add_string(&jb, "proto", proto_name);
+    if (master_name) jb_add_string(&jb, "master_proto", master_name);
+    if (category_name) jb_add_string(&jb, "category", category_name);
+    jb_add_uint64(&jb, "risk_mask", entry->risk);
+    jb_add_uint64(&jb, "confidence", entry->ndpi_flow->confidence);
+
+    if (entry->ndpi_flow->host_server_name[0]) {
+        jb_add_string(&jb, "sni", entry->ndpi_flow->host_server_name);
+    }
+
+    jb_add_bool(&jb, "quarantine", worker->runtime->config->quarantine_mode);
+    if (entry->dropped_packets > 0) {
+        jb_add_uint64(&jb, "dropped_count", entry->dropped_packets);
+    }
+    jb_add_bool(&jb, "flow_closed", true);
+
+    for (size_t i = 0; i < worker->lua_script_count; ++i) {
+        lua_script_instance_t *inst = &worker->lua_scripts[i];
+        lua_State *L = inst->L;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, inst->on_packet_ref);
+        lua_newtable(L);
+        lua_pushstring(L, src_ip); lua_setfield(L, -2, "src_ip");
+        lua_pushstring(L, dst_ip); lua_setfield(L, -2, "dst_ip");
+        lua_pushinteger(L, meta->src_port); lua_setfield(L, -2, "src_port");
+        lua_pushinteger(L, meta->dst_port); lua_setfield(L, -2, "dst_port");
+        lua_pushinteger(L, meta->proto); lua_setfield(L, -2, "proto");
+        lua_pushboolean(L, meta->outbound); lua_setfield(L, -2, "outbound");
+        lua_pushinteger(L, meta->payload_len); lua_setfield(L, -2, "payload_len");
+
+        lua_newtable(L);
+        lua_pushinteger(L, entry->packets); lua_setfield(L, -2, "packets");
+        lua_pushinteger(L, entry->bytes); lua_setfield(L, -2, "bytes");
+        lua_pushinteger(L, entry->packets_outbound); lua_setfield(L, -2, "packets_out");
+        lua_pushinteger(L, entry->packets_inbound); lua_setfield(L, -2, "packets_in");
+        lua_pushinteger(L, entry->bytes_outbound); lua_setfield(L, -2, "bytes_out");
+        lua_pushinteger(L, entry->bytes_inbound); lua_setfield(L, -2, "bytes_in");
+
+        tls_packet_meta = meta;
+        tls_flow_entry = entry;
+        tls_flow_hash_hex = flow_hash_hex;
+        tls_ndpi_module = worker->ndpi_module;
+
+        if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
+            fprintf(stderr, "[worker %d] lua on_packet error %s: %s\n", worker->worker_id,
+                    inst->descriptor.signature, lua_tostring(L, -1));
+            lua_pop(L, 1);
+            tls_packet_meta = NULL;
+            tls_flow_entry = NULL;
+            tls_flow_hash_hex = NULL;
+            tls_ndpi_module = NULL;
+            continue;
+        }
+
+        tls_packet_meta = NULL;
+        tls_flow_entry = NULL;
+        tls_flow_hash_hex = NULL;
+        tls_ndpi_module = NULL;
+
+        if (!lua_istable(L, -1) || lua_table_is_empty(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        if (!lua_open) {
+            if (!jb_begin_object_field(&jb, "lua")) {
+                lua_pop(L, 1);
+                break;
+            }
+            lua_open = true;
+        }
+
+        if (!jb_begin_object_field(&jb, inst->descriptor.signature)) {
+            lua_pop(L, 1);
+            continue;
+        }
+        if (!lua_table_to_json(L, -1, &jb)) {
+            jb_close_object(&jb);
+            lua_pop(L, 1);
+            continue;
+        }
+        jb_close_object(&jb);
+        lua_pop(L, 1);
+    }
+
+    tls_packet_meta = NULL;
+    tls_flow_entry = NULL;
+    tls_flow_hash_hex = NULL;
+    tls_ndpi_module = NULL;
+
+    if (lua_open) {
+        jb_close_object(&jb);
+    }
+
+    jb_close_object(&jb);
+
+    size_t len = jb.len;
+    if (len + 1 >= json_out_size) {
+        return 0;
+    }
+    memcpy(json_out, jb.data, len);
+    json_out[len] = '\n';
+    json_out[len + 1] = '\0';
+    return len + 1;
+}
+
+static size_t cleanup_expired_flows(worker_context_t *worker,
+                                    flow_entry_t *entry,
+                                    const packet_metadata_t *meta,
+                                    char *json_out,
+                                    size_t json_out_size,
+                                    uint64_t hash) {
+    if (!worker || !entry) {
+        return 0;
+    }
+
+    packet_metadata_t fallback;
+    const packet_metadata_t *emit_meta = meta;
+    if (!emit_meta) {
+        memset(&fallback, 0, sizeof(fallback));
+        fallback.ipv6 = entry->key.ipv6;
+        size_t addr_len = entry->key.ipv6 ? 16u : 4u;
+        memcpy(fallback.src_ip, entry->key.src_ip, addr_len);
+        memcpy(fallback.dst_ip, entry->key.dst_ip, addr_len);
+        fallback.src_port = entry->key.src_port;
+        fallback.dst_port = entry->key.dst_port;
+        fallback.proto = entry->key.proto;
+        fallback.timestamp_ns = (uint64_t)(entry->last_seen * 1000000000.0);
+        emit_meta = &fallback;
+    }
+
+    nm_flow_state_t snapshot = flow_entry_to_store(entry);
+    size_t emitted = json_builder_write_completed_flow(worker, entry, emit_meta, &snapshot, json_out, json_out_size, hash);
+
+    if (worker->runtime->flow_store) {
+        flow_store_del(worker->runtime->flow_store, hash);
+    }
+
+    entry->final_reported = true;
+    flow_table_release(entry);
+    return emitted;
+}
+
+static void worker_sweep_idle_flows(worker_context_t *worker) {
+    if (!worker || !worker->runtime || !worker->runtime->config) {
+        return;
+    }
+
+    const sensor_config_t *cfg = worker->runtime->config;
+    double sweep_interval = cfg->idle_sweep_interval_seconds;
+    if (sweep_interval <= 0.0) {
+        return;
+    }
+
+    double now = get_time_seconds();
+    if ((now - worker->last_idle_sweep) < sweep_interval) {
+        return;
+    }
+    worker->last_idle_sweep = now;
+
+    double tcp_timeout = cfg->tcp_idle_timeout_seconds;
+    double other_timeout = cfg->other_idle_timeout_seconds;
+    if (tcp_timeout <= 0.0 && other_timeout <= 0.0) {
+        return;
+    }
+
+    char json_line[MAX_JSON_BUFFER];
+    for (size_t i = 0; i < worker->flows.capacity; ++i) {
+        flow_entry_t *entry = &worker->flows.entries[i];
+        if (!entry->in_use || entry->final_reported) {
+            continue;
+        }
+
+        double timeout = (entry->key.proto == IPPROTO_TCP) ? tcp_timeout : other_timeout;
+        if (timeout <= 0.0) {
+            continue;
+        }
+
+        double idle_for = now - entry->last_seen;
+        if (idle_for < timeout) {
+            continue;
+        }
+
+        uint64_t flow_hash = entry->hash;
+        uint8_t proto = entry->key.proto;
+        size_t len = cleanup_expired_flows(worker, entry, NULL, json_line, sizeof(json_line), flow_hash);
+        if (len == 0) {
+            continue;
+        }
+
+        log_manager_write_line(&worker->runtime->log_mgr, json_line);
+        if (!worker->runtime->config->stdout_minimal) {
+            printf("[idle-flow] hash=%016llx proto=%u idle=%.2fs\n",
+                   (unsigned long long)flow_hash,
+                   (unsigned int)proto,
+                   idle_for);
+        }
+    }
 }
 
 size_t worker_process_packet(worker_context_t *worker,
@@ -414,9 +666,6 @@ size_t worker_process_packet(worker_context_t *worker,
         entry->ndpi_finalized = true;
     }
 
-    char flow_hash_hex[17];
-    snprintf(flow_hash_hex, sizeof(flow_hash_hex), "%016llx", (unsigned long long)hash);
-
     bool allow = runtime_is_quarantine_permitted(worker->runtime, meta);
     if (!allow) {
         entry->dropped_packets++;
@@ -428,172 +677,15 @@ size_t worker_process_packet(worker_context_t *worker,
 
     InterlockedIncrement64(&worker->runtime->metrics.packets_processed);
 
-    bool detection_ready = (entry->detected.proto.master_protocol != NDPI_PROTOCOL_UNKNOWN) ||
-                           (entry->detected.proto.app_protocol != NDPI_PROTOCOL_UNKNOWN);
-    bool detection_changed = detection_ready &&
-                             ((entry->last_reported_master != entry->detected.proto.master_protocol) ||
-                              (entry->last_reported_app != entry->detected.proto.app_protocol));
-    bool risk_changed = entry->last_reported_risk != entry->risk;
-    bool drop_changed = entry->dropped_packets != entry->last_reported_drops;
-    bool payload_event = (meta->payload_len > 0 && !entry->payload_reported);
-    uint64_t bytes_delta = entry->bytes - entry->last_reported_bytes;
-    uint64_t packets_delta = entry->packets - entry->last_reported_packets;
-    bool volume_change = entry->reported &&
-        ((bytes_delta >= FLOW_VOLUME_BYTES_THRESHOLD) || (packets_delta >= FLOW_VOLUME_PACKET_THRESHOLD));
-    bool initial_detection_event = (!entry->reported && detection_ready);
-    bool should_emit = detection_changed || risk_changed || drop_changed || payload_event || initial_detection_event || volume_change || final_event;
-
-    if (!should_emit) {
-        goto cleanup;
+    if (worker->runtime->flow_store) {
+        nm_flow_state_t snapshot = flow_entry_to_store(entry);
+        flow_store_put(worker->runtime->flow_store, hash, &snapshot);
     }
 
-    json_builder_t jb;
-    bool lua_open = false;
-    jb_reset(&jb);
-    if (!jb_open_object(&jb)) {
-        goto cleanup;
-    }
-
-    jb_add_string(&jb, "sensor_id", worker->runtime->config->sensor_id);
-    jb_add_double(&jb, "ts", (double)meta->timestamp_ns / 1e9);
-    jb_add_string(&jb, "flow_hash", flow_hash_hex);
-
-    char src_ip[MAX_IP_STRING];
-    char dst_ip[MAX_IP_STRING];
-    format_ip_string(meta, true, src_ip, sizeof(src_ip));
-    format_ip_string(meta, false, dst_ip, sizeof(dst_ip));
-
-    jb_add_string(&jb, "src_ip", src_ip);
-    jb_add_string(&jb, "dst_ip", dst_ip);
-    jb_add_uint64(&jb, "src_port", meta->src_port);
-    jb_add_uint64(&jb, "dst_port", meta->dst_port);
-    jb_add_uint64(&jb, "proto_id", meta->proto);
-    jb_add_bool(&jb, "outbound", meta->outbound);
-    jb_add_uint64(&jb, "payload_len", meta->payload_len);
-    jb_add_uint64(&jb, "bytes_total", entry->bytes);
-    jb_add_uint64(&jb, "packets_total", entry->packets);
-    jb_add_uint64(&jb, "bytes_out", entry->bytes_outbound);
-    jb_add_uint64(&jb, "bytes_in", entry->bytes_inbound);
-
-    worker_append_ndpi_json(worker, entry, meta, &jb);
-
-    const char *proto_name = ndpi_get_proto_name(worker->ndpi_module, entry->detected.proto.app_protocol);
-    const char *master_name = ndpi_get_proto_name(worker->ndpi_module, entry->detected.proto.master_protocol);
-    const char *category_name = ndpi_category_get_name(worker->ndpi_module, entry->detected.category);
-    if (proto_name) jb_add_string(&jb, "proto", proto_name);
-    if (master_name) jb_add_string(&jb, "master_proto", master_name);
-    if (category_name) jb_add_string(&jb, "category", category_name);
-    jb_add_uint64(&jb, "risk_mask", entry->risk);
-    jb_add_uint64(&jb, "confidence", entry->ndpi_flow->confidence);
-
-    if (entry->ndpi_flow->host_server_name[0]) {
-        jb_add_string(&jb, "sni", entry->ndpi_flow->host_server_name);
-    }
-
-    jb_add_bool(&jb, "quarantine", worker->runtime->config->quarantine_mode);
-    if (entry->dropped_packets > 0) {
-        jb_add_uint64(&jb, "dropped_count", entry->dropped_packets);
-    }
     if (final_event) {
-        jb_add_bool(&jb, "flow_closed", true);
-    }
-
-    for (size_t i = 0; i < worker->lua_script_count; ++i) {
-        lua_script_instance_t *inst = &worker->lua_scripts[i];
-        lua_State *L = inst->L;
-        lua_rawgeti(L, LUA_REGISTRYINDEX, inst->on_packet_ref);
-        lua_newtable(L);
-        lua_pushstring(L, src_ip); lua_setfield(L, -2, "src_ip");
-        lua_pushstring(L, dst_ip); lua_setfield(L, -2, "dst_ip");
-        lua_pushinteger(L, meta->src_port); lua_setfield(L, -2, "src_port");
-        lua_pushinteger(L, meta->dst_port); lua_setfield(L, -2, "dst_port");
-        lua_pushinteger(L, meta->proto); lua_setfield(L, -2, "proto");
-        lua_pushboolean(L, meta->outbound); lua_setfield(L, -2, "outbound");
-        lua_pushinteger(L, meta->payload_len); lua_setfield(L, -2, "payload_len");
-
-        lua_newtable(L);
-        lua_pushinteger(L, entry->packets); lua_setfield(L, -2, "packets");
-        lua_pushinteger(L, entry->bytes); lua_setfield(L, -2, "bytes");
-        lua_pushinteger(L, entry->packets_outbound); lua_setfield(L, -2, "packets_out");
-        lua_pushinteger(L, entry->packets_inbound); lua_setfield(L, -2, "packets_in");
-        lua_pushinteger(L, entry->bytes_outbound); lua_setfield(L, -2, "bytes_out");
-        lua_pushinteger(L, entry->bytes_inbound); lua_setfield(L, -2, "bytes_in");
-
-        tls_packet_meta = meta;
-        tls_flow_entry = entry;
-        tls_flow_hash_hex = flow_hash_hex;
-        tls_ndpi_module = worker->ndpi_module;
-
-        if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
-            fprintf(stderr, "[worker %d] lua on_packet error %s: %s\n", worker->worker_id,
-                    inst->descriptor.signature, lua_tostring(L, -1));
-            lua_pop(L, 1);
-            tls_packet_meta = NULL;
-            tls_flow_entry = NULL;
-            tls_flow_hash_hex = NULL;
-            tls_ndpi_module = NULL;
-            continue;
-        }
-
-        tls_packet_meta = NULL;
-        tls_flow_entry = NULL;
-        tls_flow_hash_hex = NULL;
-        tls_ndpi_module = NULL;
-
-        if (!lua_istable(L, -1) || lua_table_is_empty(L, -1)) {
-            lua_pop(L, 1);
-            continue;
-        }
-
-        if (!lua_open) {
-            if (!jb_begin_object_field(&jb, "lua")) {
-                lua_pop(L, 1);
-                break;
-            }
-            lua_open = true;
-        }
-
-        if (!jb_begin_object_field(&jb, inst->descriptor.signature)) {
-            lua_pop(L, 1);
-            continue;
-        }
-        if (!lua_table_to_json(L, -1, &jb)) {
-            jb_close_object(&jb);
-            lua_pop(L, 1);
-            continue;
-        }
-        jb_close_object(&jb);
-        lua_pop(L, 1);
-    }
-
-    if (lua_open) {
-        jb_close_object(&jb);
-    }
-
-    jb_close_object(&jb);
-
-    size_t len = jb.len;
-    if (len + 1 >= json_out_size) {
+        emitted = cleanup_expired_flows(worker, entry, meta, json_out, json_out_size, hash);
+        release_flow = false;
         goto cleanup;
-    }
-    memcpy(json_out, jb.data, len);
-    json_out[len] = '\n';
-    json_out[len + 1] = '\0';
-
-    emitted = len + 1;
-
-    entry->reported = true;
-    entry->last_reported_master = entry->detected.proto.master_protocol;
-    entry->last_reported_app = entry->detected.proto.app_protocol;
-    entry->last_reported_risk = entry->risk;
-    entry->last_reported_drops = entry->dropped_packets;
-    entry->last_reported_bytes = entry->bytes;
-    entry->last_reported_packets = entry->packets;
-    if (meta->payload_len > 0) {
-        entry->payload_reported = true;
-    }
-    if (final_event) {
-        entry->final_reported = true;
     }
 
 cleanup:
@@ -608,6 +700,8 @@ static unsigned __stdcall worker_thread_main(void *arg) {
     char json_line[MAX_JSON_BUFFER];
 
     for (;;) {
+        worker_sweep_idle_flows(worker);
+
         bool running = InterlockedCompareExchange(&worker->runtime->running, 0, 0) != 0;
         if (!running && ring_buffer_empty(&worker->queue)) {
             break;
@@ -646,11 +740,12 @@ bool worker_context_init(worker_context_t *worker, sensor_runtime_t *runtime, in
     worker->runtime = runtime;
     worker->worker_id = worker_id;
     worker->ndpi_serializer_ready = false;
+    worker->last_idle_sweep = get_time_seconds();
 
     if (!ring_buffer_init(&worker->queue, RING_CAPACITY)) {
         return false;
     }
-    if (!flow_table_init(&worker->flows, FLOW_TABLE_CAPACITY)) {
+    if (!flow_table_init(&worker->flows, FLOW_TABLE_CAPACITY, runtime->flow_store)) {
         ring_buffer_free(&worker->queue);
         return false;
     }

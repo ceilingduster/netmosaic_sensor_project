@@ -8,10 +8,11 @@ static size_t next_power_of_two_local(size_t value) {
     return n;
 }
 
-bool flow_table_init(flow_table_t *table, size_t capacity) {
+bool flow_table_init(flow_table_t *table, size_t capacity, flow_store_t *store) {
     memset(table, 0, sizeof(*table));
     table->capacity = next_power_of_two_local(capacity);
     table->entries = (flow_entry_t *)calloc(table->capacity, sizeof(flow_entry_t));
+    table->store = store;
     return table->entries != NULL;
 }
 
@@ -29,6 +30,7 @@ void flow_table_free(flow_table_t *table) {
     free(table->entries);
     table->entries = NULL;
     table->capacity = 0;
+    table->store = NULL;
 }
 
 void flow_table_release(flow_entry_t *entry) {
@@ -81,6 +83,10 @@ flow_entry_t *flow_table_acquire(flow_table_t *table, const flow_key_t *key, uin
             if (entry->ndpi_flow) {
                 memset(entry->ndpi_flow, 0, SIZEOF_FLOW_STRUCT);
             }
+            if (table->store) {
+                nm_flow_state_t initial_state = flow_entry_to_store(entry);
+                flow_store_put(table->store, hash, &initial_state);
+            }
             return entry;
         }
         if (entry->hash == hash && memcmp(&entry->key, key, sizeof(flow_key_t)) == 0) {
@@ -90,6 +96,42 @@ flow_entry_t *flow_table_acquire(flow_table_t *table, const flow_key_t *key, uin
         index = (index + 1) & (table->capacity - 1);
     }
     return NULL;
+}
+
+static uint64_t seconds_to_ns(double value) {
+    if (value <= 0.0) {
+        return 0;
+    }
+    double scaled = value * 1000000000.0;
+    if (scaled < 0.0) {
+        return 0;
+    }
+    return (uint64_t)scaled;
+}
+
+nm_flow_state_t flow_entry_to_store(const flow_entry_t *entry) {
+    nm_flow_state_t state;
+    memset(&state, 0, sizeof(state));
+    if (!entry) {
+        return state;
+    }
+
+    state.bytes_total = entry->bytes;
+    state.packets_total = entry->packets;
+    state.first_seen_ts = seconds_to_ns(entry->first_seen);
+    state.last_seen_ts = seconds_to_ns(entry->last_seen);
+    state.src_port = entry->key.src_port;
+    state.dst_port = entry->key.dst_port;
+    state.proto_id = entry->key.proto;
+    state.ndpi_proto_id = (uint8_t)(entry->detected.proto.app_protocol & 0xFF);
+    state.risk_score = (entry->risk > 0xFFu) ? 0xFFu : (uint8_t)entry->risk;
+
+    if (!entry->key.ipv6) {
+        memcpy(&state.src_ip, entry->key.src_ip, sizeof(state.src_ip));
+        memcpy(&state.dst_ip, entry->key.dst_ip, sizeof(state.dst_ip));
+    }
+
+    return state;
 }
 
 void metadata_to_flow_key(const packet_metadata_t *meta, flow_key_t *key) {

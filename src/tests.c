@@ -36,7 +36,8 @@ static bool build_synthetic_packet(packet_job_t *job, bool outbound) {
     tcp->DstPort = htons(outbound ? 80 : 54321);
     tcp->SeqNum = htonl(1);
     tcp->AckNum = 0;
-    tcp->HdrLength = (uint8_t)(5 << 4);
+    tcp->Reserved1 = 0;
+    tcp->HdrLength = 5;
     tcp->Window = htons(1024);
 
     memcpy(job->packet + ip_header_len + tcp_header_len, payload, tcp_payload_len);

@@ -40,6 +40,8 @@
 #include "libs/lua/src/lualib.h"
 #include "libs/lua/src/lauxlib.h"
 
+#include "flow_store.h"
+
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(x) (sizeof(x) / sizeof((x)[0]))
 #endif
@@ -58,6 +60,8 @@
 #define MAX_PACKET_SIZE          0xFFFFu
 #define PACKET_BATCH_MAX         1u
 #define FLOW_TABLE_CAPACITY      65536u
+#define DEFAULT_FLOW_STORE_MAP_BYTES (2ULL * 1024ULL * 1024ULL * 1024ULL)
+#define DEFAULT_FLOW_STORE_MAX_READERS 1024u
 #define LOG_ROTATION_HISTORY     10u
 #define DEFAULT_LOG_MAX_BYTES    (10u * 1024u * 1024u)
 #define DEFAULT_LOG_BUFFER_BYTES (256u * 1024u)
@@ -69,6 +73,9 @@
 #define MAX_IP_STRING            128u
 #define FLOW_VOLUME_BYTES_THRESHOLD 256ULL
 #define FLOW_VOLUME_PACKET_THRESHOLD 4ULL
+#define DEFAULT_TCP_IDLE_TIMEOUT_SECONDS   60.0
+#define DEFAULT_OTHER_IDLE_TIMEOUT_SECONDS 5.0
+#define DEFAULT_IDLE_SWEEP_INTERVAL_SECONDS 1.0
 
 typedef struct sensor_config {
     int workers;
@@ -87,6 +94,12 @@ typedef struct sensor_config {
     char log_path[MAX_PATH];
     char sensor_id[128];
     char test_pcap_path[MAX_PATH];
+    char flow_store_path[MAX_PATH];
+    size_t flow_store_map_bytes;
+    unsigned int flow_store_max_readers;
+    double tcp_idle_timeout_seconds;
+    double other_idle_timeout_seconds;
+    double idle_sweep_interval_seconds;
 } sensor_config_t;
 
 typedef struct log_manager {
@@ -154,12 +167,17 @@ typedef struct flow_entry {
     uint32_t last_reported_drops;
     uint64_t last_reported_bytes;
     uint64_t last_reported_packets;
+    uint64_t last_reported_bytes_inbound;
+    uint64_t last_reported_bytes_outbound;
+    uint64_t last_reported_packets_inbound;
+    uint64_t last_reported_packets_outbound;
     ndpi_protocol detected;
 } flow_entry_t;
 
 typedef struct flow_table {
     flow_entry_t *entries;
     size_t capacity;
+    flow_store_t *store;
 } flow_table_t;
 
 typedef struct packet_metadata {
@@ -206,6 +224,7 @@ typedef struct sensor_runtime {
     size_t script_count;
     volatile LONG running;
     bool include_loopback;
+    flow_store_t *flow_store;
 } sensor_runtime_t;
 
 struct worker_context {
@@ -219,6 +238,7 @@ struct worker_context {
     bool ndpi_serializer_ready;
     lua_script_instance_t lua_scripts[LUA_MAX_SCRIPTS];
     size_t lua_script_count;
+    double last_idle_sweep;
 };
 
 typedef struct capture_context {
@@ -270,12 +290,13 @@ bool ring_buffer_push(ring_buffer_t *rb, const packet_job_t *job);
 bool ring_buffer_pop(ring_buffer_t *rb, packet_job_t *out_job);
 bool ring_buffer_empty(const ring_buffer_t *rb);
 
-bool flow_table_init(flow_table_t *table, size_t capacity);
+bool flow_table_init(flow_table_t *table, size_t capacity, flow_store_t *store);
 void flow_table_free(flow_table_t *table);
 void flow_table_release(flow_entry_t *entry);
 flow_entry_t *flow_table_acquire(flow_table_t *table, const flow_key_t *key, uint64_t hash, bool *is_new);
 void metadata_to_flow_key(const packet_metadata_t *meta, flow_key_t *key);
 uint64_t flow_hash_from_key(const flow_key_t *key);
+nm_flow_state_t flow_entry_to_store(const flow_entry_t *entry);
 void format_ip_string(const packet_metadata_t *meta, bool source, char *buffer, size_t buffer_len);
 bool parse_packet_metadata(const uint8_t *packet, UINT packet_len, const WINDIVERT_ADDRESS *addr, packet_metadata_t *meta);
 
