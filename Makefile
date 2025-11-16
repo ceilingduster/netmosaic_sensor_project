@@ -1,13 +1,14 @@
 CC := gcc
 NDPI_DEFINES := -DENABLE_TLS -DENABLE_DOH -DENABLE_ZLIB -DENABLE_LRU_CACHE
 CFLAGS := -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(NDPI_DEFINES) -I. -Iinclude \
+	-Wformat=2 -Werror=format-security \
 	-Ilibs/windivert/include \
 	-Ilibs/nDPI-4.14/src/include \
 	-Ilibs/lua/src \
 	-Ilibs/lmdb
 
-LDFLAGS := -static -static-libgcc -static-libstdc++ -Wl,--whole-archive -lwinpthread -Wl,--no-whole-archive \
-           -Llibs/nDPI-4.14/src/lib -Llibs/windivert/x64 -Lbuild/luanet
+LDFLAGS = -static -static-libgcc -static-libstdc++ -Wl,--whole-archive -lwinpthread -Wl,--no-whole-archive \
+		  -Llibs/nDPI-4.14/src/lib -Llibs/windivert/x64 -L$(LUA_BUILD_DIR)
 LIBS := -lndpi -lWinDivert -llua -lws2_32 -liphlpapi -ladvapi32
 
 BUILD_DIR := build
