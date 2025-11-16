@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 
 #include "libs/windivert/include/windivert.h"
+#include "libs/windivert/include/windivert_device.h"
 
 #include "libs/nDPI-4.14/src/include/ndpi_api.h"
 #include "libs/nDPI-4.14/src/include/ndpi_main.h"

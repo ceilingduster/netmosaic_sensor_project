@@ -8,7 +8,7 @@ CFLAGS := -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter $(NDPI_DEFINES) -I. -
 	-Ilibs/lmdb
 
 LDFLAGS = -static -static-libgcc -static-libstdc++ -Wl,--whole-archive -lwinpthread -Wl,--no-whole-archive \
-		  -Llibs/nDPI-4.14/src/lib -Llibs/windivert/x64 -L$(LUA_BUILD_DIR)
+		  -Llibs/nDPI-4.14/src/lib -Llibs/windivert -L$(LUA_BUILD_DIR)
 LIBS := -lndpi -lWinDivert -llua -lws2_32 -liphlpapi -ladvapi32
 
 BUILD_DIR := build
@@ -16,7 +16,7 @@ LUA_BUILD_DIR := $(BUILD_DIR)/lua
 SRC_DIR := src
 
 PTHREAD_DLL ?= C:/msys64/mingw64/bin/libwinpthread-1.dll
-WINDIVERT_DLL ?= libs/windivert/x64/WinDivert.dll
+WINDIVERT_DLL ?= libs/windivert/WinDivert.dll
 DIST_ZIP := $(BUILD_DIR)/netmosaic_sensor_dist.zip
 
 DIST_DIR := $(BUILD_DIR)/dist

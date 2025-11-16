@@ -5,6 +5,45 @@ static sensor_runtime_t g_runtime;
 static bool g_wsa_started = false;
 static volatile LONG g_signal_received = 0;
 
+static void print_windivert_driver_path(void) {
+    const char *driver_name = (sizeof(void *) == 8) ? "WinDivert64.sys" : "WinDivert32.sys";
+    HMODULE windivert = GetModuleHandleA("WinDivert.dll");
+    if (!windivert) {
+        windivert = LoadLibraryA("WinDivert.dll");
+        if (!windivert) {
+            fprintf(stderr, "[main] unable to load WinDivert.dll (err=%lu)\n", GetLastError());
+            return;
+        }
+    }
+
+    char dll_path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(windivert, dll_path, ARRAYSIZE(dll_path));
+    if (len == 0 || len >= ARRAYSIZE(dll_path)) {
+        fprintf(stderr, "[main] unable to determine WinDivert.dll path (err=%lu)\n", GetLastError());
+        return;
+    }
+
+    char directory[MAX_PATH];
+    safe_strcpy(directory, sizeof(directory), dll_path);
+    char *slash = strrchr(directory, '\\');
+    char *slash2 = strrchr(directory, '/');
+    char *pivot = slash;
+    if (slash2 && (!pivot || slash2 > pivot)) {
+        pivot = slash2;
+    }
+    if (pivot) {
+        *pivot = '\0';
+    } else {
+        directory[0] = '\0';
+    }
+
+    char driver_path[MAX_PATH];
+    build_path(driver_path, sizeof(driver_path), directory, driver_name);
+
+    printf("[main] WinDivert driver path: %s\n", driver_path);
+    sensor_debugf("[main] WinDivert driver path: %s", driver_path);
+}
+
 static BOOL WINAPI console_ctrl_handler(DWORD type) {
     switch (type) {
     case CTRL_C_EVENT:
@@ -27,6 +66,7 @@ int main(int argc, char **argv) {
         fclose(trace);
     }
     default_config(&g_config);
+    print_windivert_driver_path();
     if (!parse_arguments(&g_config, argc, argv)) {
         sensor_debugf("[main] parse_arguments returned false");
         return 1;
