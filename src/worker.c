@@ -7,6 +7,140 @@ static THREAD_LOCAL const flow_entry_t *tls_flow_entry = NULL;
 static THREAD_LOCAL const char *tls_flow_hash_hex = NULL;
 static THREAD_LOCAL struct ndpi_detection_module_struct *tls_ndpi_module = NULL;
 
+typedef struct flow_identity {
+    bool ipv6;
+    uint16_t local_port;
+    uint16_t remote_port;
+    union {
+        struct {
+            uint32_t local;
+            uint32_t remote;
+        } v4;
+        struct {
+            uint8_t local[16];
+            uint8_t remote[16];
+        } v6;
+    } addr;
+} flow_identity_t;
+
+static void build_flow_identity(const packet_metadata_t *meta, flow_identity_t *id) {
+    memset(id, 0, sizeof(*id));
+    id->ipv6 = meta->ipv6;
+    id->local_port = meta->outbound ? meta->src_port : meta->dst_port;
+    id->remote_port = meta->outbound ? meta->dst_port : meta->src_port;
+    if (meta->ipv6) {
+        memcpy(id->addr.v6.local, meta->outbound ? meta->src_ip : meta->dst_ip, 16);
+        memcpy(id->addr.v6.remote, meta->outbound ? meta->dst_ip : meta->src_ip, 16);
+    } else {
+        memcpy(&id->addr.v4.local, meta->outbound ? meta->src_ip : meta->dst_ip, sizeof(uint32_t));
+        memcpy(&id->addr.v4.remote, meta->outbound ? meta->dst_ip : meta->src_ip, sizeof(uint32_t));
+    }
+}
+
+static DWORD lookup_tcp_pid(const flow_identity_t *id) {
+    ULONG size = 0;
+    DWORD family = id->ipv6 ? AF_INET6 : AF_INET;
+    DWORD err = GetExtendedTcpTable(NULL, &size, TRUE, family, TCP_TABLE_OWNER_PID_ALL, 0);
+    if (err != ERROR_INSUFFICIENT_BUFFER) {
+        return 0;
+    }
+
+    void *buffer = malloc(size);
+    if (!buffer) {
+        return 0;
+    }
+
+    err = GetExtendedTcpTable(buffer, &size, TRUE, family, TCP_TABLE_OWNER_PID_ALL, 0);
+    if (err != NO_ERROR) {
+        free(buffer);
+        return 0;
+    }
+
+    DWORD pid = 0;
+    if (id->ipv6) {
+        PMIB_TCP6TABLE_OWNER_PID table6 = (PMIB_TCP6TABLE_OWNER_PID)buffer;
+        for (DWORD i = 0; i < table6->dwNumEntries; ++i) {
+            const MIB_TCP6ROW_OWNER_PID *row = &table6->table[i];
+            if (memcmp(row->ucLocalAddr, id->addr.v6.local, 16) != 0) continue;
+            if (memcmp(row->ucRemoteAddr, id->addr.v6.remote, 16) != 0) continue;
+            if (ntohs((u_short)row->dwLocalPort) != id->local_port) continue;
+            if (ntohs((u_short)row->dwRemotePort) != id->remote_port) continue;
+            pid = row->dwOwningPid;
+            break;
+        }
+    } else {
+        PMIB_TCPTABLE_OWNER_PID table4 = (PMIB_TCPTABLE_OWNER_PID)buffer;
+        for (DWORD i = 0; i < table4->dwNumEntries; ++i) {
+            const MIB_TCPROW_OWNER_PID *row = &table4->table[i];
+            if (row->dwLocalAddr != id->addr.v4.local) continue;
+            if (row->dwRemoteAddr != id->addr.v4.remote) continue;
+            if (ntohs((u_short)row->dwLocalPort) != id->local_port) continue;
+            if (ntohs((u_short)row->dwRemotePort) != id->remote_port) continue;
+            pid = row->dwOwningPid;
+            break;
+        }
+    }
+
+    free(buffer);
+    return pid;
+}
+
+static DWORD lookup_udp_pid(const flow_identity_t *id) {
+    ULONG size = 0;
+    DWORD family = id->ipv6 ? AF_INET6 : AF_INET;
+    DWORD err = GetExtendedUdpTable(NULL, &size, TRUE, family, UDP_TABLE_OWNER_PID, 0);
+    if (err != ERROR_INSUFFICIENT_BUFFER) {
+        return 0;
+    }
+
+    void *buffer = malloc(size);
+    if (!buffer) {
+        return 0;
+    }
+
+    err = GetExtendedUdpTable(buffer, &size, TRUE, family, UDP_TABLE_OWNER_PID, 0);
+    if (err != NO_ERROR) {
+        free(buffer);
+        return 0;
+    }
+
+    DWORD pid = 0;
+    if (id->ipv6) {
+        PMIB_UDP6TABLE_OWNER_PID table6 = (PMIB_UDP6TABLE_OWNER_PID)buffer;
+        for (DWORD i = 0; i < table6->dwNumEntries; ++i) {
+            const MIB_UDP6ROW_OWNER_PID *row = &table6->table[i];
+            if (memcmp(row->ucLocalAddr, id->addr.v6.local, 16) != 0) continue;
+            if (ntohs((u_short)row->dwLocalPort) != id->local_port) continue;
+            pid = row->dwOwningPid;
+            break;
+        }
+    } else {
+        PMIB_UDPTABLE_OWNER_PID table4 = (PMIB_UDPTABLE_OWNER_PID)buffer;
+        for (DWORD i = 0; i < table4->dwNumEntries; ++i) {
+            const MIB_UDPROW_OWNER_PID *row = &table4->table[i];
+            if (row->dwLocalAddr != id->addr.v4.local) continue;
+            if (ntohs((u_short)row->dwLocalPort) != id->local_port) continue;
+            pid = row->dwOwningPid;
+            break;
+        }
+    }
+
+    free(buffer);
+    return pid;
+}
+
+static DWORD resolve_flow_pid(const packet_metadata_t *meta) {
+    flow_identity_t id;
+    build_flow_identity(meta, &id);
+    if (meta->proto == IPPROTO_TCP) {
+        return lookup_tcp_pid(&id);
+    }
+    if (meta->proto == IPPROTO_UDP) {
+        return lookup_udp_pid(&id);
+    }
+    return 0;
+}
+
 static void worker_set_config(worker_context_t *worker, const char *proto, const char *param, const char *value) {
     if (!worker || !worker->ndpi_module) {
         return;
@@ -728,7 +862,23 @@ static unsigned __stdcall worker_thread_main(void *arg) {
             char dst_ip[MAX_IP_STRING];
             format_ip_string(&job.meta, true, src_ip, sizeof(src_ip));
             format_ip_string(&job.meta, false, dst_ip, sizeof(dst_ip));
-            printf("[flow] %s:%u -> %s:%u bytes=%u\n", src_ip, job.meta.src_port, dst_ip, job.meta.dst_port, job.packet_len);
+            DWORD pid = resolve_flow_pid(&job.meta);
+            if (pid != 0) {
+                printf("[flow] %s:%u -> %s:%u bytes=%u pid=%lu\n",
+                       src_ip,
+                       job.meta.src_port,
+                       dst_ip,
+                       job.meta.dst_port,
+                       job.packet_len,
+                       (unsigned long)pid);
+            } else {
+                printf("[flow] %s:%u -> %s:%u bytes=%u pid=unknown\n",
+                       src_ip,
+                       job.meta.src_port,
+                       dst_ip,
+                       job.meta.dst_port,
+                       job.packet_len);
+            }
         }
     }
 
