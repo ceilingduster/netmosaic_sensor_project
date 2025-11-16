@@ -10,6 +10,17 @@ NetMosaic Sensor is a Windows network telemetry agent built on top of WinDivert 
 - **Output**: A custom JSON builder writes events to `logs/network.jsonl`; fields include byte/packet counters, detection changes, risks, and nDPI JSON blobs.
 - **Workers**: Packets travel through a ring buffer to worker threads which manage flow tables, TCP termination, and reporting thresholds.
 
+## Note on WinDivert
+
+If NetMosaic fails to run, it may be due to already being installed.
+
+Run:
+```
+sc delete windivert
+```
+
+As an Administrator, that should do the trick!
+
 ## Required Libraries
 
 The repository embeds the third-party sources that are needed but keeps them unbuilt so you can track upstream releases.
